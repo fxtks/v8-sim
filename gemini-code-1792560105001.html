@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>V8 Engine Simulator - Refined Mechanics</title>
+  <style>
+    body { margin: 0; overflow: hidden; background-color: #f5f6f8; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    #canvas-container { width: 100vw; height: 100vh; }
+    #ui {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(10px);
+      padding: 20px;
+      border-radius: 12px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      color: #222;
+      width: 280px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+    }
+    .control-group { margin-bottom: 15px; }
+    .control-group:last-child { margin-bottom: 0; }
+    label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #555; margin-bottom: 8px; }
+    .slider-container { display: flex; align-items: center; gap: 10px; }
+    input[type=range] {
+      flex-grow: 1;
+      -webkit-appearance: none;
+      background: #e0e3eb;
+      height: 6px;
+      border-radius: 3px;
+      outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #0066cc;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+    .value-display { font-size: 14px; font-weight: bold; width: 45px; text-align: right; color: #0066cc; }
+    .info-panel { font-size: 11px; color: #666; margin-top: 15px; line-height: 1.4; border-top: 1px solid rgba(0,0,0,0.08); padding-top: 10px; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <div id="ui">
+    <h3 style="margin: 0 0 15px 0; font-size: 16px; color: #111;">V8 DOHC ENGINE</h3>
+    
+    <div class="control-group">
+      <label>ENGINE SPEED (RPM)</label>
+      <div class="slider-container">
+        <input type="range" id="rpmSlider" min="0" max="8000" value="1200" step="50">
+        <span id="rpmVal" class="value-display">1200</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>BLOCK OPACITY</label>
+      <div class="slider-container">
+        <input type="range" id="opacitySlider" min="0" max="1" value="0.2" step="0.05">
+        <span id="opacityVal" class="value-display">0.20</span>
+      </div>
+    </div>
+
+    <div class="info-panel">
+      • Enhanced Conrod Big-End Bearings<br>
+      • Overhead Valves Positioned Correctly<br>
+      • DOHC Dual Camshaft Alignment
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // === 1. SCENE SETUP ===
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf5f6f8);
+    scene.fog = new THREE.FogExp2(0xf5f6f8, 0.03);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(3, 2.5, 4.5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+
+    // LIGHTING
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+    scene.add(ambientLight);
+
+    const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.8);
+    dirLight1.position.set(5, 10, 7);
+    scene.add(dirLight1);
+
+    const dirLight2 = new THREE.DirectionalLight(0xddf0ff, 0.8);
+    dirLight2.position.set(-5, -2, -5);
+    scene.add(dirLight2);
+
+    const gridHelper = new THREE.GridHelper(20, 20, 0xcccccc, 0xe5e5e5);
+    gridHelper.position.y = -1.5;
+    scene.add(gridHelper);
+
+    // === 2. MATERIALS ===
+    const metalMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.85, roughness: 0.2 });
+    const darkMetalMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.9, roughness: 0.3 });
+    const brassMat = new THREE.MeshStandardMaterial({ color: 0xd4a300, metalness: 0.7, roughness: 0.2 });
+    const intakeValveMat = new THREE.MeshStandardMaterial({ color: 0x0066ff, metalness: 0.4, roughness: 0.2 });
+    const exhaustValveMat = new THREE.MeshStandardMaterial({ color: 0xff3322, metalness: 0.4, roughness: 0.2 });
+    
+    const blockMat = new THREE.MeshPhysicalMaterial({
+      color: 0x556677,
+      metalness: 0.1,
+      roughness: 0.1,
+      transmission: 0.75,
+      transparent: true,
+      opacity: 0.2,
+      ior: 1.5,
+      depthWrite: false
+    });
+
+    // === 3. ENGINE KINEMATICS CONFIGURATION ===
+    const V_ANGLE = Math.PI / 4; 
+    const BORE_SPACING = 0.65;
+    const CRANK_RADIUS = 0.35;
+    const ROD_LENGTH = 1.1;
+    const PISTON_RADIUS = 0.28;
+
+    const crankOffsets = [
+      0,
+      0 + V_ANGLE,
+      Math.PI / 2,
+      Math.PI / 2 + V_ANGLE,
+      Math.PI * 1.5,
+      Math.PI * 1.5 + V_ANGLE,
+      Math.PI,
+      Math.PI + V_ANGLE
+    ];
+
+    const engineGroup = new THREE.Group();
+    scene.add(engineGroup);
+
+    // === 4. BUILD COMPONENTS ===
+
+    // A. Engine Block
+    const blockGroup = new THREE.Group();
+    const blockGeo = new THREE.BoxGeometry(1.6, 2.1, 2.8);
+    const blockMesh = new THREE.Mesh(blockGeo, blockMat);
+    blockMesh.position.y = 0.65;
+    blockGroup.add(blockMesh);
+    engineGroup.add(blockGroup);
+
+    // B. Crankshaft Construction
+    const crankshaftGroup = new THREE.Group();
+    engineGroup.add(crankshaftGroup);
+
+    const shaftGeo = new THREE.CylinderGeometry(0.08, 0.08, 2.8, 16);
+    shaftGeo.rotateX(Math.PI / 2);
+    const mainShaft = new THREE.Mesh(shaftGeo, darkMetalMat);
+    crankshaftGroup.add(mainShaft);
+
+    // C. Cylinders, Pistons, Rods & Bearings
+    const cylinders = [];
+
+    for (let i = 0; i < 8; i++) {
+      const isRightBank = i % 2 !== 0;
+      const bankIndex = Math.floor(i / 2);
+      const bankAngle = isRightBank ? V_ANGLE : -V_ANGLE;
+      
+      const zPos = (bankIndex - 1.5) * BORE_SPACING + (isRightBank ? 0.08 : -0.08);
+
+      // Cylinder Bank Root
+      const cylGroup = new THREE.Group();
+      cylGroup.position.set(0, 0, zPos);
+      cylGroup.rotation.z = bankAngle;
+      engineGroup.add(cylGroup);
+
+      // Piston Mesh
+      const pistonGeo = new THREE.CylinderGeometry(PISTON_RADIUS, PISTON_RADIUS, 0.3, 32);
+      const piston = new THREE.Mesh(pistonGeo, metalMat);
+      cylGroup.add(piston);
+
+      // Connecting Rod Assembly Group
+      const rodGroup = new THREE.Group();
+      
+      // Rod Shaft
+      const rodGeo = new THREE.BoxGeometry(0.05, ROD_LENGTH, 0.04);
+      const rodMesh = new THREE.Mesh(rodGeo, darkMetalMat);
+      rodMesh.position.y = ROD_LENGTH / 2;
+      rodGroup.add(rodMesh);
+
+      // Conrod Big-End Bearing (크랭크축과 연결되는 부분)
+      const bearingGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.07, 16);
+      bearingGeo.rotateX(Math.PI / 2);
+      const bearingMesh = new THREE.Mesh(bearingGeo, darkMetalMat);
+      bearingMesh.position.y = 0; // 하단 조인트 축 중심
+      rodGroup.add(bearingMesh);
+
+      engineGroup.add(rodGroup);
+
+      // Valves Group (피스톤 상단에 정확히 배치)
+      const valves = [];
+      const valveGeo = new THREE.CylinderGeometry(0.015, 0.07, 0.45, 16);
+      // 피스톤 스트로크 최상단 위쪽에 밸브 배치
+      const valveHeadY = CRANK_RADIUS + ROD_LENGTH + 0.35; 
+
+      for (let v = 0; v < 4; v++) {
+        const isIntake = v < 2;
+        const valveMat = isIntake ? intakeValveMat : exhaustValveMat;
+        const valve = new THREE.Mesh(valveGeo, valveMat);
+        
+        const xOffset = isIntake ? -0.12 : 0.12;
+        const zOffset = (v % 2 === 0 ? -0.09 : 0.09);
+        
+        // 피스톤 상단 위치에 맞춰 변환
+        const localX = Math.sin(-bankAngle) * valveHeadY + xOffset * Math.cos(bankAngle);
+        const localY = Math.cos(bankAngle) * valveHeadY + xOffset * Math.sin(bankAngle);
+
+        valve.position.set(localX, localY, zPos + zOffset);
+        valve.rotation.z = bankAngle;
+        
+        engineGroup.add(valve);
+        valves.push({ mesh: valve, basePos: valve.position.clone(), isIntake });
+      }
+
+      // Spark Plug Light
+      const sparkLight = new THREE.PointLight(0xff6600, 0, 1.2);
+      const sparkX = Math.sin(-bankAngle) * (valveHeadY - 0.05);
+      const sparkY = Math.cos(bankAngle) * (valveHeadY - 0.05);
+      sparkLight.position.set(sparkX, sparkY, zPos);
+      
+      const plugGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.2, 8);
+      const plug = new THREE.Mesh(plugGeo, darkMetalMat);
+      plug.position.copy(sparkLight.position);
+      plug.rotation.z = bankAngle;
+      engineGroup.add(plug);
+      engineGroup.add(sparkLight);
+
+      cylinders.push({
+        index: i,
+        bankAngle,
+        zPos,
+        piston,
+        rodGroup,
+        valves,
+        sparkLight,
+        crankOffset: crankOffsets[i]
+      });
+    }
+
+    // D. DOHC Camshafts (4 Shafts)
+    const camshafts = [];
+    [-V_ANGLE, V_ANGLE].forEach((bankAngle) => {
+      [-0.12, 0.12].forEach((xDist) => {
+        const camGroup = new THREE.Group();
+        const camHeight = CRANK_RADIUS + ROD_LENGTH + 0.6;
+        
+        camGroup.position.set(
+          Math.sin(-bankAngle) * camHeight + xDist * Math.cos(bankAngle),
+          Math.cos(bankAngle) * camHeight + xDist * Math.sin(bankAngle),
+          0
+        );
+        camGroup.rotation.z = bankAngle;
+
+        const camShaftGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.7, 16);
+        camShaftGeo.rotateX(Math.PI / 2);
+        const shaftMesh = new THREE.Mesh(camShaftGeo, brassMat);
+        camGroup.add(shaftMesh);
+
+        engineGroup.add(camGroup);
+        camshafts.push(camGroup);
+      });
+    });
+
+    // === 5. UI CONTROLS & EVENT LISTENERS ===
+    let rpm = 1200;
+    const rpmSlider = document.getElementById('rpmSlider');
+    const rpmVal = document.getElementById('rpmVal');
+    const opacitySlider = document.getElementById('opacitySlider');
+    const opacityVal = document.getElementById('opacityVal');
+
+    rpmSlider.addEventListener('input', (e) => {
+      rpm = parseFloat(e.target.value);
+      rpmVal.innerText = rpm;
+    });
+
+    opacitySlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      blockMat.opacity = val;
+      opacityVal.innerText = val.toFixed(2);
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // === 6. ANIMATION & KINEMATICS LOOP ===
+    const clock = new THREE.Clock();
+    let crankAngle = 0;
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const delta = clock.getDelta();
+      const radPerSec = (rpm * 2 * Math.PI) / 60;
+      crankAngle += radPerSec * delta;
+
+      // 크랭크축 회전
+      crankshaftGroup.rotation.z = crankAngle;
+
+      // 캠샤프트 회전 (1:2 감속)
+      camshafts.forEach(cam => {
+        cam.rotation.z = crankAngle * 0.5;
+      });
+
+      cylinders.forEach((cyl) => {
+        const theta = crankAngle + cyl.crankOffset;
+
+        // 1) 피스톤 Y축 위치 계산
+        const pistonY = CRANK_RADIUS * Math.cos(theta) + 
+                       Math.sqrt(Math.pow(ROD_LENGTH, 2) - Math.pow(CRANK_RADIUS * Math.sin(theta), 2));
+        
+        cyl.piston.position.y = pistonY;
+
+        // 2) 크랭크핀 월드 좌표 (컨로드 밑 베어링 위치)
+        const pinX = Math.sin(theta) * CRANK_RADIUS;
+        const pinY = Math.cos(theta) * CRANK_RADIUS;
+
+        // 피스톤 핀 월드 좌표
+        const pX = -Math.sin(cyl.bankAngle) * pistonY;
+        const pY = Math.cos(cyl.bankAngle) * pistonY;
+
+        // 컨로드 위치 및 각도 정밀 업데이트
+        const pinWorldX = Math.sin(theta) * CRANK_RADIUS * Math.cos(cyl.bankAngle) - Math.sin(cyl.bankAngle) * (Math.cos(theta) * CRANK_RADIUS);
+        const pinWorldY = -Math.sin(theta) * CRANK_RADIUS * Math.sin(cyl.bankAngle) + Math.cos(cyl.bankAngle) * (Math.cos(theta) * CRANK_RADIUS);
+
+        cyl.rodGroup.position.set(pinWorldX, pinWorldY, cyl.zPos);
+        cyl.rodGroup.rotation.z = Math.atan2(pX - pinWorldX, pY - pinWorldY);
+
+        // 3) 4행정 밸브 개폐 및 점화 플러그 동작
+        const cyclePhase = (theta % (Math.PI * 4) + Math.PI * 4) % (Math.PI * 4);
+
+        cyl.valves.forEach(v => {
+          let lift = 0;
+          if (v.isIntake && cyclePhase < Math.PI) {
+            lift = Math.sin(cyclePhase) * 0.08;
+          } else if (!v.isIntake && cyclePhase > Math.PI * 3) {
+            lift = Math.sin(cyclePhase - Math.PI * 3) * 0.08;
+          }
+          
+          v.mesh.position.x = v.basePos.x + Math.sin(cyl.bankAngle) * lift;
+          v.mesh.position.y = v.basePos.y - Math.cos(cyl.bankAngle) * lift;
+        });
+
+        // 점화 불꽃 연출
+        const sparkDiff = Math.abs(cyclePhase - Math.PI * 2);
+        if (sparkDiff < 0.2) {
+          cyl.sparkLight.intensity = (1 - sparkDiff / 0.2) * 5.0;
+        } else {
+          cyl.sparkLight.intensity = 0;
+        }
+      });
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
